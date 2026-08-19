@@ -24,7 +24,7 @@ async function getAccessToken() {
   const clientSecret = process.env.MONCASH_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    throw new Error("MonCash credentials are missing");
+    throw new Error("MONCASH_CLIENT_ID or MONCASH_CLIENT_SECRET is missing");
   }
 
   const response = await axios.post(
@@ -54,26 +54,9 @@ app.get("/", (req, res) => {
 
 app.get("/health", (req, res) => {
   res.json({
+    success: true,
     status: "ok"
   });
-});
-
-app.post("/api/moncash/token", async (req, res) => {
-  try {
-    const token = await getAccessToken();
-
-    res.json({
-      success: true,
-      access_token: token
-    });
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-
-    res.status(500).json({
-      success: false,
-      error: "Unable to authenticate with MonCash"
-    });
-  }
 });
 
 app.post("/api/moncash/payment", async (req, res) => {
@@ -89,29 +72,48 @@ app.post("/api/moncash/payment", async (req, res) => {
 
     const token = await getAccessToken();
 
-    const paymentResponse = await axios.post(
-      `${MONCASH_GATEWAY_URL}/v1/CreatePayment`,
+    const response = await axios.post(
+      `${MONCASH_API_URL}/v1/CreatePayment`,
       {
         amount: Number(amount),
         orderId: String(orderId)
       },
       {
         headers: {
-          Authorization: `Bearer ${token}`,
           Accept: "application/json",
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json"
         }
       }
     );
 
-    res.json({
-      success: true,
-      data: paymentResponse.data
-    });
-  } catch (error) {
-    console.error(error.response?.data || error.message);
+    const paymentToken = response.data?.payment_token?.token;
 
-    res.status(500).json({
+    if (!paymentToken) {
+      return res.status(502).json({
+        success: false,
+        error: "MonCash did not return a payment token"
+      });
+    }
+
+    const redirectUrl =
+      `${MONCASH_GATEWAY_URL}/Payment/Redirect?token=` +
+      encodeURIComponent(paymentToken);
+
+    return res.json({
+      success: true,
+      payment_token: paymentToken,
+      redirect_url: redirectUrl,
+      moncash_response: response.data
+    });
+
+  } catch (error) {
+    console.error(
+      "MonCash error:",
+      error.response?.data || error.message
+    );
+
+    return res.status(error.response?.status || 500).json({
       success: false,
       error: "Payment creation failed",
       details: error.response?.data || error.message
